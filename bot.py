@@ -123,7 +123,11 @@ async def check_levelup(guild, member, old_lvl, new_lvl, cfg):
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user} online")
-    await bot.tree.sync()
+    try:
+        synced = await bot.tree.sync()
+        print(f"✅ {len(synced)} Commands gesynced")
+    except Exception as e:
+        print(f"❌ Sync Fehler: {e}")
     voice_xp_loop.start()
     for g in bot.guilds:
         try: invite_cache[g.id] = {i.code: i.uses for i in await g.invites()}
