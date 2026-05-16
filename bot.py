@@ -92,7 +92,8 @@ async def hole_config(gid):
     doc = await guilds_col.find_one({"guild_id": gid})
     if not doc:
         doc = {"guild_id": gid, "levelup_channel": None, "blacklist_channels": [],
-               "role_rewards": {}, "xp_multiplier_roles": {}, "log_channel": None}
+               "role_rewards": {}, "xp_multiplier_roles": {}, "log_channel": None,
+               "level_names": {}}
         await guilds_col.insert_one(doc)
     return doc
 
@@ -317,17 +318,27 @@ async def p_daily(ctx):
 
 @bot.command(name="stats")
 async def p_stats(ctx):
-    total_u = await users_col.count_documents({"guild_id": ctx.guild.id})
+    gid = ctx.guild.id
+    total_u = await users_col.count_documents({"guild_id": gid})
     res = await users_col.aggregate([
-        {"$match": {"guild_id": ctx.guild.id}},
+        {"$match": {"guild_id": gid}},
         {"$group": {"_id": None, "xp": {"$sum": "$xp"}, "max_lvl": {"$max": "$level"}}}
     ]).to_list(1)
     xp = res[0]["xp"] if res else 0
     ml = res[0]["max_lvl"] if res else 0
-    e = discord.Embed(title="📈 Server-Stats", color=discord.Color.purple())
+    top5 = await users_col.find({"guild_id": gid}).sort("xp", -1).limit(5).to_list(5)
+    medals = ["🥇","🥈","🥉","4️⃣","5️⃣"]
+    leaderboard = ""
+    for i, en in enumerate(top5):
+        try: name = (await bot.fetch_user(en["user_id"])).display_name
+        except: name = "Unbekannt"
+        leaderboard += medals[i] + " " + name + " — Level " + str(en["level"]) + " (" + str(en["xp"]) + " XP)
+"
+    e = discord.Embed(title="📈 Server-Statistiken", color=discord.Color.purple())
     e.add_field(name="👥 User", value=str(total_u), inline=True)
     e.add_field(name="⭐ XP gesamt", value=str(xp), inline=True)
     e.add_field(name="🏆 Max Level", value=str(ml), inline=True)
+    e.add_field(name="🏆 Top 5", value=leaderboard or "Keine Daten", inline=False)
     await ctx.send(embed=e)
 
 @bot.command(name="help")
@@ -337,7 +348,9 @@ async def p_help(ctx):
 `/level` oder `?level` – Dein Level, XP & Fortschritt
 `/rangliste` oder `?rangliste` – Top-User nach XP
 `/daily` oder `?daily` – Täglicher XP-Bonus
-`/stats` oder `?stats` – Serverweite Statistiken
+`/stats` oder `?stats` – Serverweite Statistiken + Top 5
+`/mystats` oder `?mystats` – Deine persönlichen Statistiken
+`/profil` oder `?profil` – Grafische Profilkarte
 `/help` oder `?help` – Diese Übersicht
 """, inline=False)
     e.add_field(name="⚙️ Admin Commands", value="""
@@ -350,6 +363,7 @@ async def p_help(ctx):
 `/blacklist-kanal #kanal` – Kein XP Kanal
 `/rolle-bei-level level @rolle` – Rolle bei Level
 `/xp-multiplikator @rolle 2.0` – XP Boost
+`/level-name level name` – Level-Namen setzen
 """, inline=False)
     e.add_field(name="⭐ XP-Quellen", value="💬 Nachrichten · 🎤 Sprachkanal · 👍 Reaktionen · 📨 Einladungen (+50 XP)", inline=False)
     e.set_footer(text="Tipp: /daily jeden Tag holen für den Streak-Bonus!")
@@ -358,12 +372,14 @@ async def p_help(ctx):
 # ── Slash Commands ─────────────────────────────────────────────
 @bot.tree.command(name="level", description="Zeigt dein Level und XP.")
 async def level_cmd(interaction: discord.Interaction, user: discord.Member = None):
+    await interaction.response.defer()
     ziel = user or interaction.user
     e = await send_level(interaction, ziel, interaction.guild_id)
-    await interaction.response.send_message(embed=e)
+    await interaction.followup.send(embed=e)
 
 @bot.tree.command(name="rangliste", description="Top-User nach XP (mit Seiten).")
 async def rangliste_cmd(interaction: discord.Interaction, seite: int = 1):
+    await interaction.response.defer()
     pp = 10
     skip = (seite-1)*pp
     entries = await users_col.find({"guild_id": interaction.guild_id}).sort("xp",-1).skip(skip).limit(pp).to_list(pp)
@@ -378,10 +394,11 @@ async def rangliste_cmd(interaction: discord.Interaction, seite: int = 1):
         except: name = f"User {en['user_id']}"
         desc += f"{prefix} {name} — Level {en['level']} ({en['xp']} XP)\n"
     e = discord.Embed(title=f"🏆 Rangliste – Seite {seite}/{pages}", description=desc or "Leer.", color=discord.Color.gold())
-    await interaction.response.send_message(embed=e)
+    await interaction.followup.send(embed=e)
 
 @bot.tree.command(name="daily", description="Täglicher XP-Bonus.")
 async def daily_cmd(interaction: discord.Interaction):
+    await interaction.response.defer()
     u = await hole_user(interaction.guild_id, interaction.user.id)
     now = datetime.utcnow()
     last = u.get("last_daily")
@@ -391,7 +408,7 @@ async def daily_cmd(interaction: discord.Interaction):
         if diff < timedelta(hours=20):
             warte = timedelta(hours=20) - diff
             h, r = divmod(int(warte.total_seconds()), 3600)
-            await interaction.response.send_message(f"⏰ Warte noch **{h}h {r//60}m**!", ephemeral=True); return
+            await interaction.followup.send(f"⏰ Warte noch **{h}h {r//60}m**!", ephemeral=True); return
         streak = u.get("streak",0)+1 if diff < timedelta(hours=48) else 1
     else:
         streak = 1
@@ -405,22 +422,36 @@ async def daily_cmd(interaction: discord.Interaction):
     m = interaction.guild.get_member(interaction.user.id)
     if m: await check_levelup(interaction.guild, m, u["level"], new_lvl, cfg)
     e = discord.Embed(title="✅ Daily!", description=f"**+{total} XP** | 🔥 Streak: **{streak}**{f' (+{bonus} Bonus)' if bonus else ''}", color=discord.Color.green())
-    await interaction.response.send_message(embed=e)
+    await interaction.followup.send(embed=e)
 
-@bot.tree.command(name="stats", description="Serverweite XP-Statistiken.")
+@bot.tree.command(name="stats", description="Serverweite Statistiken + Top 5 Leaderboard.")
 async def stats_cmd(interaction: discord.Interaction):
-    total_u = await users_col.count_documents({"guild_id": interaction.guild_id})
+    await interaction.response.defer()
+    gid = interaction.guild_id
+    total_u = await users_col.count_documents({"guild_id": gid})
     res = await users_col.aggregate([
-        {"$match": {"guild_id": interaction.guild_id}},
+        {"$match": {"guild_id": gid}},
         {"$group": {"_id": None, "xp": {"$sum": "$xp"}, "max_lvl": {"$max": "$level"}}}
     ]).to_list(1)
     xp = res[0]["xp"] if res else 0
     ml = res[0]["max_lvl"] if res else 0
-    e = discord.Embed(title="📈 Server-Stats", color=discord.Color.purple())
-    e.add_field(name="👥 User", value=str(total_u), inline=True)
+
+    # Top 5
+    top5 = await users_col.find({"guild_id": gid}).sort("xp", -1).limit(5).to_list(5)
+    medals = ["🥇","🥈","🥉","4️⃣","5️⃣"]
+    leaderboard = ""
+    for i, en in enumerate(top5):
+        try: name = (await bot.fetch_user(en["user_id"])).display_name
+        except: name = "Unbekannt"
+        leaderboard += medals[i] + " " + name + " — Level " + str(en["level"]) + " (" + str(en["xp"]) + " XP)
+"
+
+    e = discord.Embed(title="📈 Server-Statistiken", color=discord.Color.purple())
+    e.add_field(name="👥 Aktive User", value=str(total_u), inline=True)
     e.add_field(name="⭐ XP gesamt", value=str(xp), inline=True)
-    e.add_field(name="🏆 Max Level", value=str(ml), inline=True)
-    await interaction.response.send_message(embed=e)
+    e.add_field(name="🏆 Höchstes Level", value=str(ml), inline=True)
+    e.add_field(name="🏆 Top 5 Leaderboard", value=leaderboard or "Keine Daten", inline=False)
+    await interaction.followup.send(embed=e)
 
 # ── Admin ──────────────────────────────────────────────────────
 def admin_check():
@@ -430,76 +461,88 @@ def admin_check():
 @bot.tree.command(name="xp-add", description="[Admin] XP hinzufügen.")
 @admin_check()
 async def xp_add(i: discord.Interaction, user: discord.Member, menge: int):
+    await i.response.defer()
     u = await hole_user(i.guild_id, user.id)
     nx = u["xp"]+menge; nl = berechne_level(nx)
     cfg = await hole_config(i.guild_id)
     await set_user(i.guild_id, user.id, {"xp": nx, "level": nl})
     await log(i.guild_id, user.id, "admin_add", menge)
     await check_levelup(i.guild, user, u["level"], nl, cfg)
-    await i.response.send_message(f"✅ +{menge} XP für {user.mention}. Gesamt: {nx}")
+    await i.followup.send(f"✅ +{menge} XP für {user.mention}. Gesamt: {nx}")
 
 @bot.tree.command(name="xp-remove", description="[Admin] XP entfernen.")
 @admin_check()
 async def xp_remove(i: discord.Interaction, user: discord.Member, menge: int):
+    await i.response.defer()
     u = await hole_user(i.guild_id, user.id)
     nx = max(0, u["xp"]-menge); nl = berechne_level(nx)
     await set_user(i.guild_id, user.id, {"xp": nx, "level": nl})
     await log(i.guild_id, user.id, "admin_remove", -menge)
-    await i.response.send_message(f"✅ -{menge} XP von {user.mention}. Gesamt: {nx}")
+    await i.followup.send(f"✅ -{menge} XP von {user.mention}. Gesamt: {nx}")
 
 @bot.tree.command(name="level-set", description="[Admin] Level setzen.")
 @admin_check()
 async def level_set(i: discord.Interaction, user: discord.Member, level: int):
+    await i.response.defer()
     xp = sum(xp_fuer_level(l+1) for l in range(level))
     await set_user(i.guild_id, user.id, {"xp": xp, "level": level})
-    await i.response.send_message(f"✅ {user.mention} → Level {level}")
+    await i.followup.send(f"✅ {user.mention} → Level {level}")
 
 @bot.tree.command(name="level-reset", description="[Admin] User zurücksetzen.")
 @admin_check()
 async def level_reset(i: discord.Interaction, user: discord.Member):
+    await i.response.defer()
     await set_user(i.guild_id, user.id, {"xp": 0, "level": 0, "streak": 0, "invites": 0})
-    await i.response.send_message(f"✅ {user.mention} wurde zurückgesetzt.")
+    await i.followup.send(f"✅ {user.mention} wurde zurückgesetzt.")
 
 @bot.tree.command(name="server-reset", description="[Admin] Alle XP zurücksetzen.")
 @admin_check()
 async def server_reset(i: discord.Interaction, bestaetigung: str):
+    await i.response.defer()
     if bestaetigung != "JA ICH BIN SICHER":
-        await i.response.send_message("❌ Schreib `JA ICH BIN SICHER` als Bestätigung.", ephemeral=True); return
+        await i.followup.send("❌ Schreib `JA ICH BIN SICHER` als Bestätigung.", ephemeral=True); return
     await users_col.delete_many({"guild_id": i.guild_id})
-    await i.response.send_message("✅ Alle Daten gelöscht.")
+    await i.followup.send("✅ Alle Daten gelöscht.")
 
 @bot.tree.command(name="levelup-kanal", description="[Admin] Level-Up Kanal setzen.")
 @admin_check()
 async def levelup_kanal(i: discord.Interaction, kanal: discord.TextChannel):
+    await i.response.defer()
     await guilds_col.update_one({"guild_id": i.guild_id}, {"$set": {"levelup_channel": kanal.id}}, upsert=True)
-    await i.response.send_message(f"✅ Level-Ups → {kanal.mention}")
+    await i.followup.send(f"✅ Level-Ups → {kanal.mention}")
 
 @bot.tree.command(name="blacklist-kanal", description="[Admin] Kanal ohne XP.")
 @admin_check()
 async def blacklist_kanal(i: discord.Interaction, kanal: discord.TextChannel):
+    await i.response.defer()
     await guilds_col.update_one({"guild_id": i.guild_id}, {"$addToSet": {"blacklist_channels": kanal.id}}, upsert=True)
-    await i.response.send_message(f"✅ {kanal.mention} ist jetzt auf der Blacklist.")
+    await i.followup.send(f"✅ {kanal.mention} ist jetzt auf der Blacklist.")
 
 @bot.tree.command(name="rolle-bei-level", description="[Admin] Rolle für Level vergeben.")
 @admin_check()
 async def rolle_bei_level(i: discord.Interaction, level: int, rolle: discord.Role):
+    await i.response.defer()
     await guilds_col.update_one({"guild_id": i.guild_id}, {"$set": {f"role_rewards.{level}": rolle.id}}, upsert=True)
-    await i.response.send_message(f"✅ Bei Level {level} → {rolle.mention}")
+    await i.followup.send(f"✅ Bei Level {level} → {rolle.mention}")
 
 @bot.tree.command(name="xp-multiplikator", description="[Admin] XP-Multiplikator für Rolle.")
 @admin_check()
 async def xp_mult(i: discord.Interaction, rolle: discord.Role, multiplikator: float):
+    await i.response.defer()
     await guilds_col.update_one({"guild_id": i.guild_id}, {"$set": {f"xp_multiplier_roles.{rolle.id}": multiplikator}}, upsert=True)
-    await i.response.send_message(f"✅ {rolle.mention} → {multiplikator}x XP")
+    await i.followup.send(f"✅ {rolle.mention} → {multiplikator}x XP")
 
 @bot.tree.command(name="help", description="Zeigt alle Commands.")
 async def help_cmd(interaction: discord.Interaction):
+    await interaction.response.defer()
     e = discord.Embed(title="📖 Level Bot – Commands", color=discord.Color.blurple())
     e.add_field(name="👤 User Commands", value="""
 `/level` oder `?level` – Dein Level, XP & Fortschritt
 `/rangliste` oder `?rangliste` – Top-User nach XP
 `/daily` oder `?daily` – Täglicher XP-Bonus
-`/stats` oder `?stats` – Serverweite Statistiken
+`/stats` oder `?stats` – Serverweite Statistiken + Top 5
+`/mystats` oder `?mystats` – Deine persönlichen Statistiken
+`/profil` oder `?profil` – Grafische Profilkarte
 `/help` oder `?help` – Diese Übersicht
 """, inline=False)
     e.add_field(name="⚙️ Admin Commands", value="""
@@ -512,10 +555,162 @@ async def help_cmd(interaction: discord.Interaction):
 `/blacklist-kanal #kanal` – Kein XP Kanal
 `/rolle-bei-level level @rolle` – Rolle bei Level
 `/xp-multiplikator @rolle 2.0` – XP Boost
+`/level-name level name` – Level-Namen setzen
 """, inline=False)
     e.add_field(name="⭐ XP-Quellen", value="💬 Nachrichten · 🎤 Sprachkanal · 👍 Reaktionen · 📨 Einladungen (+50 XP)", inline=False)
     e.set_footer(text="Tipp: /daily jeden Tag holen für den Streak-Bonus!")
-    await interaction.response.send_message(embed=e)
+    await interaction.followup.send(embed=e)
+
+# ── Profilkarte generieren ────────────────────────────────────
+async def erstelle_profilkarte(user: discord.Member, u: dict) -> discord.File:
+    from PIL import Image, ImageDraw, ImageFont, ImageOps
+    import aiohttp, io
+
+    W, H = 800, 250
+    img = Image.new("RGBA", (W, H), (30, 30, 40, 255))
+    draw = ImageDraw.Draw(img)
+
+    # Hintergrund Gradient
+    for y in range(H):
+        alpha = int(20 + (y / H) * 30)
+        draw.line([(0, y), (W, y)], fill=(50, 50, 70, alpha))
+
+    # Avatar laden
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(str(user.display_avatar.url)) as resp:
+                avatar_data = await resp.read()
+        avatar = Image.open(io.BytesIO(avatar_data)).convert("RGBA").resize((180, 180))
+        # Runder Avatar
+        mask = Image.new("L", (180, 180), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, 180, 180), fill=255)
+        avatar.putalpha(mask)
+        img.paste(avatar, (35, 35), avatar)
+        # Rahmen
+        draw.ellipse((33, 33, 215, 215), outline=(114, 137, 218), width=4)
+    except:
+        draw.ellipse((35, 35, 215, 215), fill=(114, 137, 218))
+
+    # Fonts (Fallback auf Standard)
+    try:
+        font_big = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
+        font_mid = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 22)
+        font_sml = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 18)
+    except:
+        font_big = font_mid = font_sml = ImageFont.load_default()
+
+    # Name
+    draw.text((240, 30), user.display_name, font=font_big, fill=(255, 255, 255))
+
+    # Level & XP
+    cur, nxt = xp_im_level(u["xp"])
+    level = u["level"]
+    draw.text((240, 80), "Level " + str(level), font=font_mid, fill=(114, 137, 218))
+    draw.text((240, 110), str(u["xp"]) + " XP gesamt", font=font_sml, fill=(180, 180, 180))
+
+    # Streak
+    streak = u.get("streak", 0)
+    draw.text((240, 140), "🔥 Streak: " + str(streak) + " Tage", font=font_sml, fill=(255, 200, 50))
+
+    # XP Fortschrittsbalken
+    bar_x, bar_y, bar_w, bar_h = 240, 175, 510, 28
+    draw.rounded_rectangle([bar_x, bar_y, bar_x+bar_w, bar_y+bar_h], radius=14, fill=(60, 60, 80))
+    filled = int((cur / nxt) * bar_w) if nxt > 0 else 0
+    if filled > 0:
+        draw.rounded_rectangle([bar_x, bar_y, bar_x+filled, bar_y+bar_h], radius=14, fill=(114, 137, 218))
+    draw.text((bar_x + bar_w//2 - 40, bar_y + 4), str(cur) + " / " + str(nxt) + " XP", font=font_sml, fill=(255, 255, 255))
+
+    # Rang
+    rang_pos = await users_col.count_documents({"guild_id": user.guild.id, "xp": {"$gt": u["xp"]}}) + 1
+    draw.text((240, 215), "Rang #" + str(rang_pos), font=font_sml, fill=(150, 220, 150))
+
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    buf.seek(0)
+    return discord.File(buf, filename="profil.png")
+
+# ── Neue Commands ──────────────────────────────────────────────
+
+@bot.tree.command(name="profil", description="Zeigt deine grafische Profilkarte.")
+async def profil_cmd(interaction: discord.Interaction, user: discord.Member = None):
+    await interaction.response.defer()
+    ziel = user or interaction.user
+    u = await hole_user(interaction.guild_id, ziel.id)
+    try:
+        datei = await erstelle_profilkarte(ziel, u)
+        await interaction.followup.send(file=datei)
+    except Exception as e:
+        await interaction.followup.send("❌ Profilkarte konnte nicht erstellt werden: `" + str(e) + "`")
+
+@bot.command(name="profil")
+async def p_profil(ctx, user: discord.Member = None):
+    ziel = user or ctx.author
+    u = await hole_user(ctx.guild.id, ziel.id)
+    async with ctx.typing():
+        try:
+            datei = await erstelle_profilkarte(ziel, u)
+            await ctx.send(file=datei)
+        except Exception as e:
+            await ctx.send("❌ Profilkarte Fehler: `" + str(e) + "`")
+
+@bot.tree.command(name="mystats", description="Deine persönlichen Statistiken.")
+async def mystats_cmd(interaction: discord.Interaction):
+    await interaction.response.defer()
+    gid, uid = interaction.guild_id, interaction.user.id
+    u = await hole_user(gid, uid)
+    rang = await users_col.count_documents({"guild_id": gid, "xp": {"$gt": u["xp"]}}) + 1
+    gesamt = await users_col.count_documents({"guild_id": gid})
+    cur, nxt = xp_im_level(u["xp"])
+    prozent = int((cur / nxt) * 100) if nxt > 0 else 0
+
+    # Level-Name holen
+    cfg = await hole_config(gid)
+    level_name = cfg.get("level_names", {}).get(str(u["level"]), "")
+    level_str = "Level " + str(u["level"]) + (" (" + level_name + ")" if level_name else "")
+
+    e = discord.Embed(title="📊 Deine Statistiken", color=discord.Color.blue())
+    e.set_thumbnail(url=interaction.user.display_avatar.url)
+    e.add_field(name="🏆 Level", value=level_str, inline=True)
+    e.add_field(name="⭐ XP gesamt", value=str(u["xp"]), inline=True)
+    e.add_field(name="🥇 Rang", value="#" + str(rang) + " von " + str(gesamt), inline=True)
+    e.add_field(name="📈 Fortschritt", value=str(cur) + "/" + str(nxt) + " XP (" + str(prozent) + "%)", inline=True)
+    e.add_field(name="🔥 Streak", value=str(u.get("streak", 0)) + " Tage", inline=True)
+    e.add_field(name="📨 Einladungen", value=str(u.get("invites", 0)), inline=True)
+    await interaction.followup.send(embed=e)
+
+@bot.command(name="mystats")
+async def p_mystats(ctx):
+    gid, uid = ctx.guild.id, ctx.author.id
+    u = await hole_user(gid, uid)
+    rang = await users_col.count_documents({"guild_id": gid, "xp": {"$gt": u["xp"]}}) + 1
+    gesamt = await users_col.count_documents({"guild_id": gid})
+    cur, nxt = xp_im_level(u["xp"])
+    prozent = int((cur / nxt) * 100) if nxt > 0 else 0
+    cfg = await hole_config(gid)
+    level_name = cfg.get("level_names", {}).get(str(u["level"]), "")
+    level_str = "Level " + str(u["level"]) + (" (" + level_name + ")" if level_name else "")
+    e = discord.Embed(title="📊 Deine Statistiken", color=discord.Color.blue())
+    e.set_thumbnail(url=ctx.author.display_avatar.url)
+    e.add_field(name="🏆 Level", value=level_str, inline=True)
+    e.add_field(name="⭐ XP gesamt", value=str(u["xp"]), inline=True)
+    e.add_field(name="🥇 Rang", value="#" + str(rang) + " von " + str(gesamt), inline=True)
+    e.add_field(name="📈 Fortschritt", value=str(cur) + "/" + str(nxt) + " XP (" + str(prozent) + "%)", inline=True)
+    e.add_field(name="🔥 Streak", value=str(u.get("streak", 0)) + " Tage", inline=True)
+    e.add_field(name="📨 Einladungen", value=str(u.get("invites", 0)), inline=True)
+    await ctx.send(embed=e)
+
+@bot.tree.command(name="level-name", description="[Admin] Benutzerdefinierten Namen für ein Level setzen.")
+@admin_check()
+async def level_name_cmd(interaction: discord.Interaction, level: int, name: str):
+    await interaction.response.defer()
+    await guilds_col.update_one(
+        {"guild_id": interaction.guild_id},
+        {"$set": {"level_names." + str(level): name}},
+        upsert=True
+    )
+    await interaction.followup.send("✅ Level " + str(level) + " heißt jetzt **" + name + "**")
+
+# ── Stats mit Leaderboard ──────────────────────────────────────
 
 # ── Error Handler & Debug ─────────────────────────────────────
 @bot.tree.error
@@ -567,4 +762,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
