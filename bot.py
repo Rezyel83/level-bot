@@ -332,8 +332,7 @@ async def p_stats(ctx):
     for i, en in enumerate(top5):
         try: name = (await bot.fetch_user(en["user_id"])).display_name
         except: name = "Unbekannt"
-        leaderboard += medals[i] + " " + name + " — Level " + str(en["level"]) + " (" + str(en["xp"]) + " XP)
-"
+        leaderboard += medals[i] + " " + name + " — Level " + str(en["level"]) + " (" + str(en["xp"]) + " XP)\n"
     e = discord.Embed(title="📈 Server-Statistiken", color=discord.Color.purple())
     e.add_field(name="👥 User", value=str(total_u), inline=True)
     e.add_field(name="⭐ XP gesamt", value=str(xp), inline=True)
@@ -346,24 +345,24 @@ async def p_help(ctx):
     e = discord.Embed(title="📖 Level Bot – Commands", color=discord.Color.blurple())
     e.add_field(name="👤 User Commands", value="""
 `/level` oder `?level` – Dein Level, XP & Fortschritt
-`/rangliste` oder `?rangliste` – Top-User nach XP
-`/daily` oder `?daily` – Täglicher XP-Bonus
+`/rangliste` oder `?rangliste` – Top-User nach XP (mit Seiten)
+`/daily` oder `?daily` – Täglicher XP-Bonus + Streak
 `/stats` oder `?stats` – Serverweite Statistiken + Top 5
-`/mystats` oder `?mystats` – Deine persönlichen Statistiken
-`/profil` oder `?profil` – Grafische Profilkarte
+`/mystats` oder `?mystats` – Deine persönlichen Statistiken & Rang
+`/profil` oder `?profil` – Grafische Profilkarte mit XP-Balken
 `/help` oder `?help` – Diese Übersicht
 """, inline=False)
     e.add_field(name="⚙️ Admin Commands", value="""
 `/xp-add @user menge` – XP hinzufügen
 `/xp-remove @user menge` – XP entfernen
-`/level-set @user level` – Level setzen
+`/level-set @user level` – Level direkt setzen
 `/level-reset @user` – User zurücksetzen
-`/server-reset` – Alle XP löschen
-`/levelup-kanal #kanal` – Level-Up Kanal
-`/blacklist-kanal #kanal` – Kein XP Kanal
-`/rolle-bei-level level @rolle` – Rolle bei Level
-`/xp-multiplikator @rolle 2.0` – XP Boost
-`/level-name level name` – Level-Namen setzen
+`/server-reset` – Alle XP löschen (⚠️)
+`/levelup-kanal #kanal` – Kanal für Level-Up Nachrichten
+`/blacklist-kanal #kanal` – Kein XP in diesem Kanal
+`/rolle-bei-level level @rolle` – Rolle bei Level vergeben
+`/xp-multiplikator @rolle 2.0` – XP-Boost für Rolle
+`/level-name level name` – Benutzerdef. Level-Namen
 """, inline=False)
     e.add_field(name="⭐ XP-Quellen", value="💬 Nachrichten · 🎤 Sprachkanal · 👍 Reaktionen · 📨 Einladungen (+50 XP)", inline=False)
     e.set_footer(text="Tipp: /daily jeden Tag holen für den Streak-Bonus!")
@@ -443,8 +442,7 @@ async def stats_cmd(interaction: discord.Interaction):
     for i, en in enumerate(top5):
         try: name = (await bot.fetch_user(en["user_id"])).display_name
         except: name = "Unbekannt"
-        leaderboard += medals[i] + " " + name + " — Level " + str(en["level"]) + " (" + str(en["xp"]) + " XP)
-"
+        leaderboard += medals[i] + " " + name + " — Level " + str(en["level"]) + " (" + str(en["xp"]) + " XP)\n"
 
     e = discord.Embed(title="📈 Server-Statistiken", color=discord.Color.purple())
     e.add_field(name="👥 Aktive User", value=str(total_u), inline=True)
@@ -534,95 +532,106 @@ async def xp_mult(i: discord.Interaction, rolle: discord.Role, multiplikator: fl
 
 @bot.tree.command(name="help", description="Zeigt alle Commands.")
 async def help_cmd(interaction: discord.Interaction):
-    await interaction.response.defer()
     e = discord.Embed(title="📖 Level Bot – Commands", color=discord.Color.blurple())
     e.add_field(name="👤 User Commands", value="""
 `/level` oder `?level` – Dein Level, XP & Fortschritt
-`/rangliste` oder `?rangliste` – Top-User nach XP
-`/daily` oder `?daily` – Täglicher XP-Bonus
+`/rangliste` oder `?rangliste` – Top-User nach XP (mit Seiten)
+`/daily` oder `?daily` – Täglicher XP-Bonus + Streak
 `/stats` oder `?stats` – Serverweite Statistiken + Top 5
-`/mystats` oder `?mystats` – Deine persönlichen Statistiken
-`/profil` oder `?profil` – Grafische Profilkarte
+`/mystats` oder `?mystats` – Deine persönlichen Statistiken & Rang
+`/profil` oder `?profil` – Grafische Profilkarte mit XP-Balken
 `/help` oder `?help` – Diese Übersicht
 """, inline=False)
     e.add_field(name="⚙️ Admin Commands", value="""
 `/xp-add @user menge` – XP hinzufügen
 `/xp-remove @user menge` – XP entfernen
-`/level-set @user level` – Level setzen
+`/level-set @user level` – Level direkt setzen
 `/level-reset @user` – User zurücksetzen
-`/server-reset` – Alle XP löschen
-`/levelup-kanal #kanal` – Level-Up Kanal
-`/blacklist-kanal #kanal` – Kein XP Kanal
-`/rolle-bei-level level @rolle` – Rolle bei Level
-`/xp-multiplikator @rolle 2.0` – XP Boost
-`/level-name level name` – Level-Namen setzen
+`/server-reset` – Alle XP löschen (⚠️)
+`/levelup-kanal #kanal` – Kanal für Level-Up Nachrichten
+`/blacklist-kanal #kanal` – Kein XP in diesem Kanal
+`/rolle-bei-level level @rolle` – Rolle bei Level vergeben
+`/xp-multiplikator @rolle 2.0` – XP-Boost für Rolle
+`/level-name level name` – Benutzerdef. Level-Namen
 """, inline=False)
     e.add_field(name="⭐ XP-Quellen", value="💬 Nachrichten · 🎤 Sprachkanal · 👍 Reaktionen · 📨 Einladungen (+50 XP)", inline=False)
     e.set_footer(text="Tipp: /daily jeden Tag holen für den Streak-Bonus!")
-    await interaction.followup.send(embed=e)
+    await interaction.response.send_message(embed=e)
 
 # ── Profilkarte generieren ────────────────────────────────────
 async def erstelle_profilkarte(user: discord.Member, u: dict) -> discord.File:
     from PIL import Image, ImageDraw, ImageFont, ImageOps
     import aiohttp, io
 
-    W, H = 800, 250
-    img = Image.new("RGBA", (W, H), (30, 30, 40, 255))
+    W, H = 1000, 350
+    img = Image.new("RGBA", (W, H), (23, 23, 33, 255))
     draw = ImageDraw.Draw(img)
 
-    # Hintergrund Gradient
+    # Hintergrund
     for y in range(H):
-        alpha = int(20 + (y / H) * 30)
-        draw.line([(0, y), (W, y)], fill=(50, 50, 70, alpha))
+        r = int(23 + (y / H) * 20)
+        g = int(23 + (y / H) * 10)
+        b = int(33 + (y / H) * 30)
+        draw.line([(0, y), (W, y)], fill=(r, g, b, 255))
+
+    # Akzent-Linie oben
+    draw.rectangle([0, 0, W, 6], fill=(114, 137, 218))
 
     # Avatar laden
+    AV = 220
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(str(user.display_avatar.url)) as resp:
                 avatar_data = await resp.read()
-        avatar = Image.open(io.BytesIO(avatar_data)).convert("RGBA").resize((180, 180))
-        # Runder Avatar
-        mask = Image.new("L", (180, 180), 0)
-        ImageDraw.Draw(mask).ellipse((0, 0, 180, 180), fill=255)
+        avatar = Image.open(io.BytesIO(avatar_data)).convert("RGBA").resize((AV, AV))
+        mask = Image.new("L", (AV, AV), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, AV, AV), fill=255)
         avatar.putalpha(mask)
-        img.paste(avatar, (35, 35), avatar)
-        # Rahmen
-        draw.ellipse((33, 33, 215, 215), outline=(114, 137, 218), width=4)
+        img.paste(avatar, (40, 65), avatar)
+        draw.ellipse((37, 62, 37+AV+6, 62+AV+6), outline=(114, 137, 218), width=5)
     except:
-        draw.ellipse((35, 35, 215, 215), fill=(114, 137, 218))
+        draw.ellipse((40, 65, 40+AV, 65+AV), fill=(114, 137, 218))
 
-    # Fonts (Fallback auf Standard)
+    # Fonts
     try:
-        font_big = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
-        font_mid = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 22)
-        font_sml = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 18)
+        font_big = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 42)
+        font_mid = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
+        font_sml = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24)
+        font_xs  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
     except:
-        font_big = font_mid = font_sml = ImageFont.load_default()
+        font_big = font_mid = font_sml = font_xs = ImageFont.load_default()
+
+    X = 290
 
     # Name
-    draw.text((240, 30), user.display_name, font=font_big, fill=(255, 255, 255))
+    draw.text((X, 70), user.display_name, font=font_big, fill=(255, 255, 255))
 
     # Level & XP
     cur, nxt = xp_im_level(u["xp"])
     level = u["level"]
-    draw.text((240, 80), "Level " + str(level), font=font_mid, fill=(114, 137, 218))
-    draw.text((240, 110), str(u["xp"]) + " XP gesamt", font=font_sml, fill=(180, 180, 180))
+    draw.text((X, 125), "Level " + str(level), font=font_mid, fill=(114, 137, 218))
+    draw.text((X, 165), str(u["xp"]) + " XP gesamt", font=font_sml, fill=(180, 180, 200))
 
     # Streak
     streak = u.get("streak", 0)
-    draw.text((240, 140), "🔥 Streak: " + str(streak) + " Tage", font=font_sml, fill=(255, 200, 50))
-
-    # XP Fortschrittsbalken
-    bar_x, bar_y, bar_w, bar_h = 240, 175, 510, 28
-    draw.rounded_rectangle([bar_x, bar_y, bar_x+bar_w, bar_y+bar_h], radius=14, fill=(60, 60, 80))
-    filled = int((cur / nxt) * bar_w) if nxt > 0 else 0
-    if filled > 0:
-        draw.rounded_rectangle([bar_x, bar_y, bar_x+filled, bar_y+bar_h], radius=14, fill=(114, 137, 218))
-    draw.text((bar_x + bar_w//2 - 40, bar_y + 4), str(cur) + " / " + str(nxt) + " XP", font=font_sml, fill=(255, 255, 255))
+    draw.text((X, 205), "Streak: " + str(streak) + " Tage", font=font_sml, fill=(255, 200, 50))
 
     # Rang
     rang_pos = await users_col.count_documents({"guild_id": user.guild.id, "xp": {"$gt": u["xp"]}}) + 1
-    draw.text((240, 215), "Rang #" + str(rang_pos), font=font_sml, fill=(150, 220, 150))
+    draw.text((X + 300, 205), "Rang #" + str(rang_pos), font=font_sml, fill=(150, 220, 150))
+
+    # XP Fortschrittsbalken
+    bar_x, bar_y, bar_w, bar_h = X, 260, W - X - 40, 36
+    draw.rounded_rectangle([bar_x, bar_y, bar_x+bar_w, bar_y+bar_h], radius=18, fill=(50, 50, 70))
+    filled = int((cur / nxt) * bar_w) if nxt > 0 else 0
+    if filled > 4:
+        draw.rounded_rectangle([bar_x, bar_y, bar_x+filled, bar_y+bar_h], radius=18, fill=(114, 137, 218))
+    pct = str(cur) + " / " + str(nxt) + " XP"
+    draw.text((bar_x + bar_w//2 - 60, bar_y + 6), pct, font=font_xs, fill=(255, 255, 255))
+
+    # Einladungen
+    invites = u.get("invites", 0)
+    draw.text((X, 310), "Einladungen: " + str(invites), font=font_xs, fill=(150, 150, 180))
 
     buf = io.BytesIO()
     img.save(buf, "PNG")
