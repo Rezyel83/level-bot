@@ -22,8 +22,13 @@ async def health():
     return {"status": "ok"}
 
 def starte_webserver():
+    from dashboard import app as dashboard_app
+    # Dashboard routes in den Bot-App mergen
+    from fastapi import FastAPI
+    combined = FastAPI()
+    combined.mount("/", dashboard_app)
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+    uvicorn.run(combined, host="0.0.0.0", port=port, log_level="warning")
 
 async def keep_alive():
     import aiohttp
