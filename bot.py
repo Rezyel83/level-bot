@@ -25,6 +25,21 @@ def starte_webserver():
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
 
+async def keep_alive():
+    import aiohttp
+    url = os.getenv("RENDER_EXTERNAL_URL", "")
+    if not url:
+        return
+    await asyncio.sleep(60)
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                await session.get(f"{url}/health")
+                print("🏓 Keep-alive ping gesendet")
+        except:
+            pass
+        await asyncio.sleep(300)
+
 # ── MongoDB ────────────────────────────────────────────────────
 mongo = AsyncIOMotorClient(os.getenv("MONGODB_URI"))
 db = mongo[os.getenv("MONGODB_DB", "levelbot")]
@@ -88,7 +103,7 @@ intents.members = True
 intents.voice_states = True
 intents.reactions = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="?", intents=intents)
 cooldowns = {}
 voice_times = {}
 invite_cache = {}
@@ -129,6 +144,7 @@ async def on_ready():
     except Exception as e:
         print(f"❌ Sync Fehler: {e}")
     voice_xp_loop.start()
+    asyncio.ensure_future(keep_alive())
     for g in bot.guilds:
         try: invite_cache[g.id] = {i.code: i.uses for i in await g.invites()}
         except: pass
@@ -230,21 +246,116 @@ async def voice_xp_loop():
                 m = g.get_member(uid)
                 if m: await check_levelup(g, m, u["level"], new_lvl, cfg)
 
-# ── Slash Commands ─────────────────────────────────────────────
-
-@bot.tree.command(name="level", description="Zeigt dein Level und XP.")
-async def level_cmd(interaction: discord.Interaction, user: discord.Member = None):
-    ziel = user or interaction.user
-    u = await hole_user(interaction.guild_id, ziel.id)
+# ── Prefix Commands (?level, ?daily etc) ──────────────────────
+async def send_level(ctx_or_interaction, ziel, gid):
+    u = await hole_user(gid, ziel.id)
     cur, nxt = xp_im_level(u["xp"])
     bar = "█" * int(cur/nxt*20) + "░" * (20 - int(cur/nxt*20))
     e = discord.Embed(title=f"📊 {ziel.display_name}", color=discord.Color.blue())
     e.add_field(name="Level", value=str(u["level"]), inline=True)
     e.add_field(name="XP", value=str(u["xp"]), inline=True)
-    e.add_field(name="🔥 Streak", value=str(u.get("streak",0)), inline=True)
+    e.add_field(name="🔥 Streak", value=str(u.get("streak", 0)), inline=True)
     e.add_field(name="Fortschritt", value=f"`{bar}` {cur}/{nxt}", inline=False)
-    e.add_field(name="📨 Einladungen", value=str(u.get("invites",0)), inline=True)
+    e.add_field(name="📨 Einladungen", value=str(u.get("invites", 0)), inline=True)
     e.set_thumbnail(url=ziel.display_avatar.url)
+    return e
+
+@bot.command(name="level")
+async def p_level(ctx, user: discord.Member = None):
+    ziel = user or ctx.author
+    e = await send_level(ctx, ziel, ctx.guild.id)
+    await ctx.send(embed=e)
+
+@bot.command(name="rangliste")
+async def p_rangliste(ctx, seite: int = 1):
+    pp = 10
+    skip = (seite-1)*pp
+    entries = await users_col.find({"guild_id": ctx.guild.id}).sort("xp",-1).skip(skip).limit(pp).to_list(pp)
+    total = await users_col.count_documents({"guild_id": ctx.guild.id})
+    pages = max(1, math.ceil(total/pp))
+    medals = ["🥇","🥈","🥉"]
+    desc = ""
+    for i, en in enumerate(entries):
+        rang = skip+i+1
+        prefix = medals[rang-1] if rang<=3 else f"**{rang}.**"
+        try: name = (await bot.fetch_user(en["user_id"])).display_name
+        except: name = f"User {en['user_id']}"
+        desc += f"{prefix} {name} — Level {en['level']} ({en['xp']} XP)\n"
+    e = discord.Embed(title=f"🏆 Rangliste – Seite {seite}/{pages}", description=desc or "Leer.", color=discord.Color.gold())
+    await ctx.send(embed=e)
+
+@bot.command(name="daily")
+async def p_daily(ctx):
+    u = await hole_user(ctx.guild.id, ctx.author.id)
+    now = datetime.utcnow()
+    last = u.get("last_daily")
+    if last:
+        last_dt = last if isinstance(last, datetime) else datetime.fromisoformat(str(last))
+        diff = now - last_dt
+        if diff < timedelta(hours=20):
+            warte = timedelta(hours=20) - diff
+            h, r = divmod(int(warte.total_seconds()), 3600)
+            await ctx.send(f"⏰ Warte noch **{h}h {r//60}m**!"); return
+        streak = u.get("streak",0)+1 if diff < timedelta(hours=48) else 1
+    else:
+        streak = 1
+    bonus = STREAK_BONUS*(streak-1)
+    total = DAILY_XP+bonus
+    new_xp = u["xp"]+total
+    new_lvl = berechne_level(new_xp)
+    cfg = await hole_config(ctx.guild.id)
+    await set_user(ctx.guild.id, ctx.author.id, {"xp": new_xp, "level": new_lvl, "last_daily": now, "streak": streak})
+    await log(ctx.guild.id, ctx.author.id, "daily", total)
+    m = ctx.guild.get_member(ctx.author.id)
+    if m: await check_levelup(ctx.guild, m, u["level"], new_lvl, cfg)
+    e = discord.Embed(title="✅ Daily!", description=f"**+{total} XP** | 🔥 Streak: **{streak}**{f' (+{bonus} Bonus)' if bonus else ''}", color=discord.Color.green())
+    await ctx.send(embed=e)
+
+@bot.command(name="stats")
+async def p_stats(ctx):
+    total_u = await users_col.count_documents({"guild_id": ctx.guild.id})
+    res = await users_col.aggregate([
+        {"$match": {"guild_id": ctx.guild.id}},
+        {"$group": {"_id": None, "xp": {"$sum": "$xp"}, "max_lvl": {"$max": "$level"}}}
+    ]).to_list(1)
+    xp = res[0]["xp"] if res else 0
+    ml = res[0]["max_lvl"] if res else 0
+    e = discord.Embed(title="📈 Server-Stats", color=discord.Color.purple())
+    e.add_field(name="👥 User", value=str(total_u), inline=True)
+    e.add_field(name="⭐ XP gesamt", value=str(xp), inline=True)
+    e.add_field(name="🏆 Max Level", value=str(ml), inline=True)
+    await ctx.send(embed=e)
+
+@bot.command(name="help")
+async def p_help(ctx):
+    e = discord.Embed(title="📖 Level Bot – Commands", color=discord.Color.blurple())
+    e.add_field(name="👤 User Commands", value="""
+`/level` oder `?level` – Dein Level, XP & Fortschritt
+`/rangliste` oder `?rangliste` – Top-User nach XP
+`/daily` oder `?daily` – Täglicher XP-Bonus
+`/stats` oder `?stats` – Serverweite Statistiken
+`/help` oder `?help` – Diese Übersicht
+""", inline=False)
+    e.add_field(name="⚙️ Admin Commands", value="""
+`/xp-add @user menge` – XP hinzufügen
+`/xp-remove @user menge` – XP entfernen
+`/level-set @user level` – Level setzen
+`/level-reset @user` – User zurücksetzen
+`/server-reset` – Alle XP löschen
+`/levelup-kanal #kanal` – Level-Up Kanal
+`/blacklist-kanal #kanal` – Kein XP Kanal
+`/rolle-bei-level level @rolle` – Rolle bei Level
+`/xp-multiplikator @rolle 2.0` – XP Boost
+""", inline=False)
+    e.add_field(name="⭐ XP-Quellen", value="💬 Nachrichten · 🎤 Sprachkanal · 👍 Reaktionen · 📨 Einladungen (+50 XP)", inline=False)
+    e.set_footer(text="Tipp: /daily jeden Tag holen für den Streak-Bonus!")
+    await ctx.send(embed=e)
+
+# ── Slash Commands ─────────────────────────────────────────────
+@bot.tree.command(name="level", description="Zeigt dein Level und XP.")
+async def level_cmd(interaction: discord.Interaction, user: discord.Member = None):
+    ziel = user or interaction.user
+    e = await send_level(interaction, ziel, interaction.guild_id)
     await interaction.response.send_message(embed=e)
 
 @bot.tree.command(name="rangliste", description="Top-User nach XP (mit Seiten).")
@@ -377,35 +488,28 @@ async def xp_mult(i: discord.Interaction, rolle: discord.Role, multiplikator: fl
     await guilds_col.update_one({"guild_id": i.guild_id}, {"$set": {f"xp_multiplier_roles.{rolle.id}": multiplikator}}, upsert=True)
     await i.response.send_message(f"✅ {rolle.mention} → {multiplikator}x XP")
 
-# ── Help Command ───────────────────────────────────────────────
-@bot.tree.command(name="help", description="Zeigt alle verfügbaren Commands.")
+@bot.tree.command(name="help", description="Zeigt alle Commands.")
 async def help_cmd(interaction: discord.Interaction):
     e = discord.Embed(title="📖 Level Bot – Commands", color=discord.Color.blurple())
-
     e.add_field(name="👤 User Commands", value="""
-`/level [user]` – Dein Level, XP, Streak & Fortschritt
-`/rangliste [seite]` – Top-User nach XP (10 pro Seite)
-`/daily` – Täglichen XP-Bonus holen (🔥 Streak-Bonus!)
-`/stats` – Serverweite XP-Statistiken
-`/help` – Diese Übersicht
+`/level` oder `?level` – Dein Level, XP & Fortschritt
+`/rangliste` oder `?rangliste` – Top-User nach XP
+`/daily` oder `?daily` – Täglicher XP-Bonus
+`/stats` oder `?stats` – Serverweite Statistiken
+`/help` oder `?help` – Diese Übersicht
 """, inline=False)
-
     e.add_field(name="⚙️ Admin Commands", value="""
 `/xp-add @user menge` – XP hinzufügen
 `/xp-remove @user menge` – XP entfernen
-`/level-set @user level` – Level direkt setzen
-`/level-reset @user` – User komplett zurücksetzen
-`/server-reset` – Alle XP löschen (⚠️ nicht rückgängig!)
-`/levelup-kanal #kanal` – Kanal für Level-Up Nachrichten
-`/blacklist-kanal #kanal` – Kein XP in diesem Kanal
-`/rolle-bei-level level @rolle` – Rolle bei Level X vergeben
-`/xp-multiplikator @rolle 2.0` – XP-Boost für eine Rolle
+`/level-set @user level` – Level setzen
+`/level-reset @user` – User zurücksetzen
+`/server-reset` – Alle XP löschen
+`/levelup-kanal #kanal` – Level-Up Kanal
+`/blacklist-kanal #kanal` – Kein XP Kanal
+`/rolle-bei-level level @rolle` – Rolle bei Level
+`/xp-multiplikator @rolle 2.0` – XP Boost
 """, inline=False)
-
-    e.add_field(name="⭐ XP-Quellen", value="""
-💬 Nachrichten · 🎤 Sprachkanal · 👍 Reaktionen bekommen · 📨 Einladungen (+50 XP)
-""", inline=False)
-
+    e.add_field(name="⭐ XP-Quellen", value="💬 Nachrichten · 🎤 Sprachkanal · 👍 Reaktionen · 📨 Einladungen (+50 XP)", inline=False)
     e.set_footer(text="Tipp: /daily jeden Tag holen für den Streak-Bonus!")
     await interaction.response.send_message(embed=e)
 
