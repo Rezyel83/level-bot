@@ -437,10 +437,10 @@ async def callback(code: str):
     
     session_token = make_token(uid)
     resp = RedirectResponse("/dashboard")
-    resp.set_cookie("session", session_token, max_age=86400*7, httponly=True)
-    resp.set_cookie("uid", uid, max_age=86400*7)
-    resp.set_cookie("avatar", avatar, max_age=86400*7)
-    resp.set_cookie("username", username, max_age=86400*7)
+    resp.set_cookie("session", session_token, max_age=86400*7, httponly=True, samesite="lax", secure=True)
+    resp.set_cookie("uid", uid, max_age=86400*7, samesite="lax", secure=True)
+    resp.set_cookie("avatar", avatar, max_age=86400*7, samesite="lax", secure=True)
+    resp.set_cookie("username", username, max_age=86400*7, samesite="lax", secure=True)
     return resp
 
 @app.get("/dashboard", response_class=HTMLResponse)
