@@ -103,7 +103,7 @@ intents.members = True
 intents.voice_states = True
 intents.reactions = True
 
-bot = commands.Bot(command_prefix="?", intents=intents)
+bot = commands.Bot(command_prefix="?", intents=intents, help_command=None)
 cooldowns = {}
 voice_times = {}
 invite_cache = {}
