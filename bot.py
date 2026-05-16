@@ -41,7 +41,11 @@ async def keep_alive():
         await asyncio.sleep(300)
 
 # ── MongoDB ────────────────────────────────────────────────────
-mongo = AsyncIOMotorClient(os.getenv("MONGODB_URI"))
+mongo = AsyncIOMotorClient(
+    os.getenv("MONGODB_URI"),
+    tls=True,
+    tlsAllowInvalidCertificates=True
+)
 db = mongo[os.getenv("MONGODB_DB", "levelbot")]
 users_col  = db["users"]
 guilds_col = db["guilds"]
@@ -563,3 +567,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+    
