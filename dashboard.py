@@ -266,6 +266,7 @@ async function loadLeaderboard(page) {
 let adminLoaded = false;
 async function loadAdmin() {
   adminLoaded = true;
+  loadRoleRewards();
   const data = await api('/api/admin/stats');
   document.getElementById('admin-total-users').textContent = data.total_users;
   document.getElementById('admin-total-xp').textContent = data.total_xp?.toLocaleString();
@@ -292,6 +293,39 @@ async function adminAction(action) {
   const r = await api('/api/admin/xp', 'POST', {user_id: uid, action, amount});
   if (r.ok) { toast('✅ Erledigt!'); loadAdmin(); }
   else toast('❌ ' + (r.error || 'Fehler'), 'error');
+}
+
+async function loadRoleRewards() {
+  const data = await api('/api/admin/role-rewards');
+  if (!data.rewards) return;
+  const entries = Object.entries(data.rewards);
+  if (entries.length === 0) {
+    document.getElementById('role-rewards-list').innerHTML = '<div style="color:var(--muted);">Noch keine Rollen konfiguriert</div>';
+    return;
+  }
+  document.getElementById('role-rewards-list').innerHTML = entries
+    .sort((a,b) => parseInt(a[0]) - parseInt(b[0]))
+    .map(([lvl, rid]) => `
+      <div style="display:flex;align-items:center;gap:12px;padding:10px;background:var(--card2);border-radius:8px;margin-bottom:8px;">
+        <div style="background:var(--accent);border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-weight:700;">${lvl}</div>
+        <div style="flex:1;"><div style="font-weight:600;">Level ${lvl}</div><div style="color:var(--muted);font-size:13px;">Rollen-ID: ${rid}</div></div>
+        <button class="btn btn-danger" onclick="removeRoleReward('${lvl}')" style="padding:6px 12px;font-size:13px;">Entfernen</button>
+      </div>`).join('');
+}
+
+async function addRoleReward() {
+  const level = parseInt(document.getElementById('role-level').value);
+  const roleId = document.getElementById('role-id').value.trim();
+  if (!level || !roleId) { toast('Level und Rollen-ID eingeben!', 'error'); return; }
+  const r = await api('/api/admin/role-rewards', 'POST', {level, role_id: roleId});
+  if (r.ok) { toast('✅ Rolle hinzugefügt!'); loadRoleRewards(); document.getElementById('role-level').value=''; document.getElementById('role-id').value=''; }
+  else toast('❌ ' + (r.error || 'Fehler'), 'error');
+}
+
+async function removeRoleReward(level) {
+  const r = await api('/api/admin/role-rewards/' + level, 'DELETE');
+  if (r.ok) { toast('✅ Rolle entfernt!'); loadRoleRewards(); }
+  else toast('❌ Fehler', 'error');
 }
 
 async function serverReset() {
@@ -370,6 +404,18 @@ ADMIN_HTML = """
     <p style="color:var(--muted);font-size:14px;margin-bottom:16px;">Diese Aktionen können nicht rückgängig gemacht werden.</p>
     <button class="btn btn-danger" onclick="serverReset()">🗑️ Server komplett zurücksetzen</button>
   </div>
+</div>
+
+<div class="card" style="margin-bottom:24px;">
+  <div class="section-title">🎭 Rollen-Belohnungen</div>
+  <p style="color:var(--muted);font-size:14px;margin-bottom:16px;">Welche Rolle wird bei welchem Level vergeben?</p>
+  <div id="role-rewards-list" style="margin-bottom:16px;">Lädt…</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+    <input id="role-level" type="number" placeholder="Level" style="max-width:100px;">
+    <input id="role-id" placeholder="Rollen-ID">
+    <button class="btn btn-success" onclick="addRoleReward()">+ Hinzufügen</button>
+  </div>
+  <p style="color:var(--muted);font-size:12px;margin-top:8px;">💡 Rollen-ID: Entwicklermodus → Rechtsklick auf Rolle → ID kopieren</p>
 </div>
 
 <div class="card">
@@ -648,6 +694,38 @@ async def api_admin_logs(request: Request):
     if not uid or int(uid) != BOT_OWNER_ID: raise HTTPException(403)
     logs = await logs_col.find({"guild_id":GUILD_ID}).sort("ts",-1).limit(50).to_list(50)
     return {"logs":[{"user_id":str(l.get("user_id")),"aktion":l.get("aktion"),"xp":l.get("xp",0),"ts":l["ts"].strftime("%d.%m %H:%M") if isinstance(l.get("ts"),datetime) else "?"} for l in logs]}
+
+@app.get("/api/admin/role-rewards")
+async def api_get_role_rewards(request: Request):
+    uid = get_uid(request)
+    if not uid or int(uid) != BOT_OWNER_ID: raise HTTPException(403)
+    cfg = await guilds_col.find_one({"guild_id": GUILD_ID}) or {}
+    return {"rewards": cfg.get("role_rewards", {})}
+
+@app.post("/api/admin/role-rewards")
+async def api_add_role_reward(request: Request):
+    uid = get_uid(request)
+    if not uid or int(uid) != BOT_OWNER_ID: raise HTTPException(403)
+    body = await request.json()
+    level = str(body.get("level"))
+    role_id = str(body.get("role_id"))
+    if not level or not role_id: return {"ok": False, "error": "Level und Rollen-ID erforderlich"}
+    await guilds_col.update_one(
+        {"guild_id": GUILD_ID},
+        {"$set": {f"role_rewards.{level}": int(role_id)}},
+        upsert=True
+    )
+    return {"ok": True}
+
+@app.delete("/api/admin/role-rewards/{level}")
+async def api_remove_role_reward(level: str, request: Request):
+    uid = get_uid(request)
+    if not uid or int(uid) != BOT_OWNER_ID: raise HTTPException(403)
+    await guilds_col.update_one(
+        {"guild_id": GUILD_ID},
+        {"$unset": {f"role_rewards.{level}": ""}}
+    )
+    return {"ok": True}
 
 @app.get("/logout")
 async def logout():
