@@ -6,44 +6,33 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 import uvicorn
-from fastapi import FastAPI
 
 load_dotenv()
 
-# ── FastAPI (Render braucht einen laufenden Port) ──────────────
-app = FastAPI()
-
-@app.get("/")
-async def root():
-    return {"status": "ok", "bot": str(bot.user) if bot.is_ready() else "starting"}
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+# ── FastAPI (läuft als Dashboard) ─────────────────────────────
+# Dashboard in dashboard.py
 
 def starte_webserver():
     from dashboard import app as dashboard_app
-    # Dashboard routes in den Bot-App mergen
-    from fastapi import FastAPI
-    combined = FastAPI()
-    combined.mount("/", dashboard_app)
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run(combined, host="0.0.0.0", port=port, log_level="warning")
+    uvicorn.run(dashboard_app, host="0.0.0.0", port=port, log_level="warning")
 
 async def keep_alive():
     import aiohttp
     url = os.getenv("RENDER_EXTERNAL_URL", "")
     if not url:
+        print("⚠️ RENDER_EXTERNAL_URL nicht gesetzt - Keep-alive deaktiviert")
         return
-    await asyncio.sleep(60)
+    await asyncio.sleep(30)
     while True:
         try:
-            async with aiohttp.ClientSession() as session:
+            import aiohttp as _aiohttp
+            async with _aiohttp.ClientSession() as session:
                 await session.get(f"{url}/health")
-                print("🏓 Keep-alive ping gesendet")
-        except:
-            pass
-        await asyncio.sleep(300)
+                print("🏓 Keep-alive ping")
+        except Exception as e:
+            print(f"⚠️ Keep-alive Fehler: {e}")
+        await asyncio.sleep(240)
 
 # ── MongoDB ────────────────────────────────────────────────────
 mongo = AsyncIOMotorClient(
@@ -776,3 +765,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+    
