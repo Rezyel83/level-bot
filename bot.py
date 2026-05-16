@@ -150,7 +150,7 @@ async def on_ready():
         except: pass
     await bot.change_presence(activity=discord.Activity(
         type=discord.ActivityType.watching,
-        name=f"{sum(g.member_count for g in bot.guilds)} User | /level"))
+        name=f"{sum(g.member_count or 0 for g in bot.guilds)} User | /level"))
 
 @bot.event
 async def on_message(msg: discord.Message):
@@ -164,7 +164,7 @@ async def on_message(msg: discord.Message):
     if key in cooldowns and now - cooldowns[key] < COOLDOWN_SEK:
         await bot.process_commands(msg); return
     cooldowns[key] = now
-    mult = max((float(cfg.get("xp_multiplier_roles", {}).get(str(r.id), 1)) for r in msg.author.roles), default=1.0)
+    mult = max((float(cfg.get("xp_multiplier_roles", {}).get(str(r.id), 1)) for r in msg.author.roles), default=1.0)  # type: ignore[attr-defined]
     xp_gain = int(XP_NACHRICHT * mult)
     u = await hole_user(gid, uid)
     new_xp = u["xp"] + xp_gain
@@ -261,7 +261,7 @@ async def send_level(ctx_or_interaction, ziel, gid):
     return e
 
 @bot.command(name="level")
-async def p_level(ctx, user: discord.Member = None):
+async def p_level(ctx, user: discord.Member | None = None):
     ziel = user or ctx.author
     e = await send_level(ctx, ziel, ctx.guild.id)
     await ctx.send(embed=e)
@@ -353,7 +353,7 @@ async def p_help(ctx):
 
 # ── Slash Commands ─────────────────────────────────────────────
 @bot.tree.command(name="level", description="Zeigt dein Level und XP.")
-async def level_cmd(interaction: discord.Interaction, user: discord.Member = None):
+async def level_cmd(interaction: discord.Interaction, user: discord.Member | None = None):
     ziel = user or interaction.user
     e = await send_level(interaction, ziel, interaction.guild_id)
     await interaction.response.send_message(embed=e)
@@ -398,8 +398,9 @@ async def daily_cmd(interaction: discord.Interaction):
     cfg = await hole_config(interaction.guild_id)
     await set_user(interaction.guild_id, interaction.user.id, {"xp": new_xp, "level": new_lvl, "last_daily": now, "streak": streak})
     await log(interaction.guild_id, interaction.user.id, "daily", total)
-    m = interaction.guild.get_member(interaction.user.id)
-    if m: await check_levelup(interaction.guild, m, u["level"], new_lvl, cfg)
+    if interaction.guild:
+        m = interaction.guild.get_member(interaction.user.id)
+        if m: await check_levelup(interaction.guild, m, u["level"], new_lvl, cfg)
     e = discord.Embed(title="✅ Daily!", description=f"**+{total} XP** | 🔥 Streak: **{streak}**{f' (+{bonus} Bonus)' if bonus else ''}", color=discord.Color.green())
     await interaction.response.send_message(embed=e)
 
