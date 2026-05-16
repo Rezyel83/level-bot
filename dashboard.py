@@ -267,6 +267,7 @@ let adminLoaded = false;
 async function loadAdmin() {
   adminLoaded = true;
   loadRoleRewards();
+  loadGuildMembers();
   const data = await api('/api/admin/stats');
   document.getElementById('admin-total-users').textContent = data.total_users;
   document.getElementById('admin-total-xp').textContent = data.total_xp?.toLocaleString();
@@ -287,12 +288,20 @@ async function loadAdminLogs() {
 }
 
 async function adminAction(action) {
-  const uid = document.getElementById('admin-uid').value.trim();
+  const uid = document.getElementById('admin-uid').value;
   const amount = parseInt(document.getElementById('admin-amount').value) || 0;
   if (!uid) { toast('User ID eingeben!', 'error'); return; }
   const r = await api('/api/admin/xp', 'POST', {user_id: uid, action, amount});
   if (r.ok) { toast('✅ Erledigt!'); loadAdmin(); }
   else toast('❌ ' + (r.error || 'Fehler'), 'error');
+}
+
+async function loadGuildMembers() {
+  const data = await api('/api/admin/guild-members');
+  if (!data.members) return;
+  const sel = document.getElementById('admin-uid');
+  sel.innerHTML = '<option value="">Member auswählen...</option>' +
+    data.members.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
 }
 
 async function loadGuildRoles() {
@@ -364,13 +373,19 @@ def render_page(content: str, uid: str = "", is_owner: bool = False, username: s
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Level Bot Dashboard</title>
+<title>RLD Level Bot Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>{CSS}</style>
 </head>
 <body>
 <nav class="nav">
-  <div class="nav-logo">🎮 Level Bot</div>
+  <div style="display:flex;align-items:center;gap:10px;">
+    <div style="background:linear-gradient(135deg,#6c63ff,#a78bfa);border-radius:8px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 4px 12px rgba(108,99,255,.4);">🎮</div>
+    <div>
+      <div style="font-weight:800;font-size:1rem;background:linear-gradient(135deg,#6c63ff,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;line-height:1;">RLD Level Bot</div>
+      <div style="font-size:10px;color:var(--muted);letter-spacing:1px;line-height:1;margin-top:2px;">DASHBOARD</div>
+    </div>
+  </div>
   <div class="nav-user">
     {'<img src="' + avatar + '" alt="avatar">' if avatar else ''}
     <span style="font-weight:600;">{username}</span>
@@ -407,7 +422,7 @@ ADMIN_HTML = """
   <div class="card">
     <div class="section-title">🔧 XP bearbeiten</div>
     <div style="display:flex;flex-direction:column;gap:12px;">
-      <input id="admin-uid" placeholder="Discord User ID">
+      <select id="admin-uid" style="width:100%;"><option value="">Lade Member...</option></select>
       <input id="admin-amount" type="number" placeholder="Menge (XP oder Level)">
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-success" onclick="adminAction('add')">+ XP hinzufügen</button>
@@ -450,7 +465,7 @@ async def index(request: Request):
         return RedirectResponse("/dashboard")
     return HTMLResponse(f"""<!DOCTYPE html>
 <html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Level Bot</title>
+<title>RLD Level Bot</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>{CSS}
 .particles {{ position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:hidden;z-index:0; }}
@@ -461,8 +476,8 @@ async def index(request: Request):
 <div class="particles" id="particles"></div>
 <div class="login-card" style="position:relative;z-index:1;">
   <div class="login-glow">🎮</div>
-  <h1 class="login-title">Level Bot</h1>
-  <p class="login-sub">Schau dein Profil an, verfolge deinen Fortschritt und verwalte deinen Server.</p>
+  <h1 class="login-title">RLD Level Bot</h1>
+  <p class="login-sub">Das offizielle Dashboard für den <strong style="color:var(--accent2);">Rocket League Deutschland</strong> Server.</p>
   <a href="https://discord.com/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&redirect_uri={DISCORD_REDIRECT_URI}&response_type=code&scope=identify" class="btn-discord">
     <svg width="20" height="20" viewBox="0 0 71 55" fill="white"><path d="M60.1 4.9A58.5 58.5 0 0045.6 1a40 40 0 00-1.8 3.6 54.2 54.2 0 00-16.2 0A40 40 0 0025.8 1 58.3 58.3 0 0011.3 5C1.6 19.7-1 34 .3 48a59 59 0 0017.9 9 42.4 42.4 0 003.7-5.9 38.3 38.3 0 01-5.8-2.8l1.4-1.1a42 42 0 0036 0l1.4 1.1a38.4 38.4 0 01-5.8 2.8 42 42 0 003.6 6 58.8 58.8 0 0018-9.1C72.2 32 68.4 17.7 60.1 4.9zM23.8 39.3c-3.5 0-6.4-3.2-6.4-7.1s2.8-7.1 6.4-7.1c3.5 0 6.4 3.2 6.3 7.1 0 3.9-2.8 7.1-6.3 7.1zm23.4 0c-3.5 0-6.4-3.2-6.4-7.1s2.8-7.1 6.4-7.1c3.5 0 6.4 3.2 6.3 7.1 0 3.9-2.8 7.1-6.3 7.1z"/></svg>
     Mit Discord einloggen
@@ -478,6 +493,9 @@ for(let i=0;i<20;i++){{
   p.appendChild(d);
 }}
 </script>
+<footer style="position:fixed;bottom:0;left:0;right:0;text-align:center;padding:12px;color:#64748b;font-size:12px;">
+  Made by <strong style="color:#a78bfa;">Rezyel83</strong> with ❤️ & AI
+</footer>
 </body></html>""")
 
 @app.get("/callback")
@@ -711,6 +729,30 @@ async def api_admin_logs(request: Request):
     if not uid or int(uid) != BOT_OWNER_ID: raise HTTPException(403)
     logs = await logs_col.find({"guild_id":GUILD_ID}).sort("ts",-1).limit(50).to_list(50)
     return {"logs":[{"user_id":str(l.get("user_id")),"aktion":l.get("aktion"),"xp":l.get("xp",0),"ts":l["ts"].strftime("%d.%m %H:%M") if isinstance(l.get("ts"),datetime) else "?"} for l in logs]}
+
+@app.get("/api/admin/guild-members")
+async def api_guild_members(request: Request):
+    uid = get_uid(request)
+    if not uid or int(uid) != BOT_OWNER_ID: raise HTTPException(403)
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            f"https://discord.com/api/guilds/{GUILD_ID}/members?limit=1000",
+            headers={"Authorization": f"Bot {os.getenv('DISCORD_TOKEN')}"}
+        ) as r:
+            members = await r.json()
+    result = []
+    for m in members:
+        u = m.get("user", {})
+        if u.get("bot"): continue
+        avatar_hash = u.get("avatar")
+        avatar = f"https://cdn.discordapp.com/avatars/{u['id']}/{avatar_hash}.png" if avatar_hash else ""
+        result.append({
+            "id": str(u["id"]),
+            "name": m.get("nick") or u.get("global_name") or u.get("username", "?"),
+            "avatar": avatar
+        })
+    result.sort(key=lambda x: x["name"].lower())
+    return {"members": result}
 
 @app.get("/api/admin/guild-roles")
 async def api_guild_roles(request: Request):
