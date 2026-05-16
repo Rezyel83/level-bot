@@ -419,24 +419,46 @@ for(let i=0;i<20;i++){{
 
 @app.get("/callback")
 async def callback(code: str):
-    async with aiohttp.ClientSession() as session:
-        r = await session.post("https://discord.com/api/oauth2/token", data={
-            "client_id": DISCORD_CLIENT_ID, "client_secret": DISCORD_CLIENT_SECRET,
-            "grant_type": "authorization_code", "code": code, "redirect_uri": DISCORD_REDIRECT_URI,
-        })
-        data = await r.json()
-        token = data.get("access_token")
-        if not token: return HTMLResponse("<h1>Login fehlgeschlagen</h1>")
-        r2 = await session.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {token}"})
-        user = await r2.json()
-        uid = user.get("id")
-        if not uid: return HTMLResponse("<h1>Fehler</h1>")
-        avatar_hash = user.get("avatar")
-        avatar = f"https://cdn.discordapp.com/avatars/{uid}/{avatar_hash}.png" if avatar_hash else ""
-        username = user.get("global_name") or user.get("username", "")
-    
+    uid = None
+    avatar = ""
+    username = ""
+    try:
+        connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            # Token holen
+            async with session.post("https://discord.com/api/oauth2/token", data={
+                "client_id": DISCORD_CLIENT_ID,
+                "client_secret": DISCORD_CLIENT_SECRET,
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": DISCORD_REDIRECT_URI,
+            }) as r:
+                data = await r.json()
+            
+            token = data.get("access_token")
+            if not token:
+                print("❌ Kein access_token:", data)
+                return HTMLResponse("<h1>Login fehlgeschlagen - kein Token</h1>")
+            
+            # User info holen
+            async with session.get("https://discord.com/api/users/@me", 
+                                   headers={"Authorization": f"Bearer {token}"}) as r2:
+                user = await r2.json()
+            
+            uid = user.get("id")
+            if not uid:
+                return HTMLResponse("<h1>Fehler - keine User ID</h1>")
+            
+            avatar_hash = user.get("avatar")
+            avatar = f"https://cdn.discordapp.com/avatars/{uid}/{avatar_hash}.png" if avatar_hash else ""
+            username = user.get("global_name") or user.get("username", "")
+            print(f"✅ Login: {username} ({uid})")
+    except Exception as e:
+        print(f"❌ OAuth Fehler: {e}")
+        return HTMLResponse(f"<h1>Fehler: {e}</h1>")
+
     session_token = make_token(uid)
-    resp = RedirectResponse("/dashboard")
+    resp = RedirectResponse("/dashboard", status_code=302)
     resp.set_cookie("session", session_token, max_age=86400*7, httponly=True, samesite="lax", secure=True)
     resp.set_cookie("uid", uid, max_age=86400*7, samesite="lax", secure=True)
     resp.set_cookie("avatar", avatar, max_age=86400*7, samesite="lax", secure=True)
