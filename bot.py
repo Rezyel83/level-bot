@@ -513,6 +513,47 @@ async def help_cmd(interaction: discord.Interaction):
     e.set_footer(text="Tipp: /daily jeden Tag holen für den Streak-Bonus!")
     await interaction.response.send_message(embed=e)
 
+# ── Error Handler & Debug ─────────────────────────────────────
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    import traceback
+    cmd_name = interaction.command.name if interaction.command else "unbekannt"
+    tb = traceback.format_exc()
+    err_str = str(error)
+    user_str = str(interaction.user)
+    user_id = interaction.user.id
+    guild_str = str(interaction.guild)
+    guild_id = interaction.guild_id
+    print("❌ SLASH CMD FEHLER [" + cmd_name + "]")
+    print("   User: " + user_str + " (" + str(user_id) + ")")
+    print("   Guild: " + guild_str + " (" + str(guild_id) + ")")
+    print("   Fehler: " + err_str)
+    print("   Traceback:\n" + tb)
+    if isinstance(error, app_commands.CheckFailure):
+        msg = "❌ Du hast keine Berechtigung für diesen Command!"
+    else:
+        msg = "❌ Fehler: `" + err_str + "`"
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except:
+        pass
+
+@bot.event
+async def on_command_error(ctx, error):
+    import traceback
+    tb = traceback.format_exc()
+    err_str = str(error)
+    print("❌ PREFIX CMD FEHLER [" + str(ctx.command) + "]")
+    print("   User: " + str(ctx.author) + " (" + str(ctx.author.id) + ")")
+    print("   Fehler: " + err_str)
+    print("   Traceback:\n" + tb)
+    if isinstance(error, commands.CommandNotFound):
+        return
+    await ctx.send("❌ Fehler: `" + err_str + "`")
+
 # ── Start ──────────────────────────────────────────────────────
 async def main():
     token = os.getenv("DISCORD_TOKEN")
