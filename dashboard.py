@@ -493,7 +493,7 @@ async def dashboard(request: Request):
         act = l.get("aktion","?")
         xp = l.get("xp", 0)
         logs_html += f"""<div class="log-item">
-          <div class="log-icon" style="background:{colors.get(act,'var(--card2)');}">{emojis.get(act,'⭐')}</div>
+          <div class="log-icon" style="background:{colors.get(act, 'var(--card2)')};">{emojis.get(act,'⭐')}</div>
           <div style="flex:1;"><div style="font-size:13px;font-weight:600;">{act}</div></div>
           <div style="color:var(--green);font-weight:700;">+{xp} XP</div>
           <div style="color:var(--muted);font-size:12px;min-width:70px;text-align:right;">{ts_str}</div>
