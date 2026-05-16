@@ -295,7 +295,19 @@ async function adminAction(action) {
   else toast('❌ ' + (r.error || 'Fehler'), 'error');
 }
 
+async function loadGuildRoles() {
+  const data = await api('/api/admin/guild-roles');
+  if (!data.roles) return;
+  const sel = document.getElementById('role-id');
+  sel.innerHTML = '<option value="">Rolle auswählen...</option>' + 
+    data.roles.map(r => {
+      const color = r.color ? '#' + r.color.toString(16).padStart(6,'0') : '#99aab5';
+      return `<option value="${r.id}" style="color:${color};">@${r.name}</option>`;
+    }).join('');
+}
+
 async function loadRoleRewards() {
+  loadGuildRoles();
   const data = await api('/api/admin/role-rewards');
   if (!data.rewards) return;
   const entries = Object.entries(data.rewards);
@@ -305,20 +317,26 @@ async function loadRoleRewards() {
   }
   document.getElementById('role-rewards-list').innerHTML = entries
     .sort((a,b) => parseInt(a[0]) - parseInt(b[0]))
-    .map(([lvl, rid]) => `
+    .map(([lvl, rid]) => {
+      const roleEl = document.querySelector(`#role-id option[value="${rid}"]`);
+      const roleName = roleEl ? roleEl.text : `ID: ${rid}`;
+      return `
       <div style="display:flex;align-items:center;gap:12px;padding:10px;background:var(--card2);border-radius:8px;margin-bottom:8px;">
         <div style="background:var(--accent);border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-weight:700;">${lvl}</div>
-        <div style="flex:1;"><div style="font-weight:600;">Level ${lvl}</div><div style="color:var(--muted);font-size:13px;">Rollen-ID: ${rid}</div></div>
+        <div style="flex:1;"><div style="font-weight:600;">Level ${lvl}</div><div style="color:var(--muted);font-size:13px;">${roleName}</div></div>
         <button class="btn btn-danger" onclick="removeRoleReward('${lvl}')" style="padding:6px 12px;font-size:13px;">Entfernen</button>
-      </div>`).join('');
+      </div>`;
+    }).join('');
 }
 
 async function addRoleReward() {
   const level = parseInt(document.getElementById('role-level').value);
-  const roleId = document.getElementById('role-id').value.trim();
-  if (!level || !roleId) { toast('Level und Rollen-ID eingeben!', 'error'); return; }
+  const sel = document.getElementById('role-id');
+  const roleId = sel.value;
+  const roleName = sel.options[sel.selectedIndex]?.text || roleId;
+  if (!level || !roleId) { toast('Level und Rolle auswählen!', 'error'); return; }
   const r = await api('/api/admin/role-rewards', 'POST', {level, role_id: roleId});
-  if (r.ok) { toast('✅ Rolle hinzugefügt!'); loadRoleRewards(); document.getElementById('role-level').value=''; document.getElementById('role-id').value=''; }
+  if (r.ok) { toast('✅ ' + roleName + ' bei Level ' + level + ' hinzugefügt!'); loadRoleRewards(); document.getElementById('role-level').value=''; }
   else toast('❌ ' + (r.error || 'Fehler'), 'error');
 }
 
@@ -412,10 +430,9 @@ ADMIN_HTML = """
   <div id="role-rewards-list" style="margin-bottom:16px;">Lädt…</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
     <input id="role-level" type="number" placeholder="Level" style="max-width:100px;">
-    <input id="role-id" placeholder="Rollen-ID">
+    <select id="role-id" style="flex:1;min-width:200px;"><option value="">Lade Rollen...</option></select>
     <button class="btn btn-success" onclick="addRoleReward()">+ Hinzufügen</button>
   </div>
-  <p style="color:var(--muted);font-size:12px;margin-top:8px;">💡 Rollen-ID: Entwicklermodus → Rechtsklick auf Rolle → ID kopieren</p>
 </div>
 
 <div class="card">
@@ -694,6 +711,22 @@ async def api_admin_logs(request: Request):
     if not uid or int(uid) != BOT_OWNER_ID: raise HTTPException(403)
     logs = await logs_col.find({"guild_id":GUILD_ID}).sort("ts",-1).limit(50).to_list(50)
     return {"logs":[{"user_id":str(l.get("user_id")),"aktion":l.get("aktion"),"xp":l.get("xp",0),"ts":l["ts"].strftime("%d.%m %H:%M") if isinstance(l.get("ts"),datetime) else "?"} for l in logs]}
+
+@app.get("/api/admin/guild-roles")
+async def api_guild_roles(request: Request):
+    uid = get_uid(request)
+    if not uid or int(uid) != BOT_OWNER_ID: raise HTTPException(403)
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            f"https://discord.com/api/guilds/{GUILD_ID}/roles",
+            headers={"Authorization": f"Bot {os.getenv('DISCORD_TOKEN')}"}
+        ) as r:
+            roles = await r.json()
+    # Sortieren nach Position, @everyone rausfiltern
+    roles = [{"id": str(r["id"]), "name": r["name"], "color": r.get("color", 0)} 
+             for r in sorted(roles, key=lambda x: x.get("position", 0), reverse=True)
+             if r["name"] != "@everyone"]
+    return {"roles": roles}
 
 @app.get("/api/admin/role-rewards")
 async def api_get_role_rewards(request: Request):
